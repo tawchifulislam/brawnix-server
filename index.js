@@ -4,6 +4,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
+const { SignJWT, jwtVerify } = require('jose-cjs');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -30,6 +31,15 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+const generateToken = async payload => {
+  const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+  return await new SignJWT(payload)
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('7d')
+    .sign(secret);
+};
 
 async function run() {
   try {
@@ -88,6 +98,79 @@ async function run() {
         });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.post('/api/auth/login', async (req, res) => {
+      try {
+        const { email, password } = req.body;
+
+        const query = { email: email };
+        const user = await usersCollection.findOne(query);
+        if (!user) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'User not found.' });
+        }
+
+        const isPasswordMatch = await bcrypt.compare(password, user.password);
+        if (!isPasswordMatch) {
+          return res
+            .status(401)
+            .send({ success: false, message: 'Invalid credentials.' });
+        }
+
+        const tokenPayload = {
+          id: user._id.toString(),
+          email: user.email,
+          role: user.role,
+          status: user.status,
+        };
+        const token = await generateToken(tokenPayload);
+
+        res.cookie('token', token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        const { password: _, ...userData } = user;
+        res.send({
+          success: true,
+          message: `Welcome back, ${user.name}!`,
+          user: userData,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get('/api/auth/me', async (req, res) => {
+      try {
+        const token = req.cookies?.token;
+        if (!token) {
+          return res
+            .status(401)
+            .send({ success: false, message: 'No token found.' });
+        }
+
+        const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+        const { payload } = await jwtVerify(token, secret);
+
+        const query = { _id: new ObjectId(payload.id) };
+        const user = await usersCollection.findOne(query);
+
+        if (!user) {
+          return res
+            .status(401)
+            .send({ success: false, message: 'User not found.' });
+        }
+
+        const { password: _, ...userData } = user;
+        res.send({ success: true, user: userData });
+      } catch (error) {
+        res.status(401).send({ success: false, message: 'Invalid token.' });
       }
     });
   } finally {
