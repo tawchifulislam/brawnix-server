@@ -173,6 +173,20 @@ async function run() {
         res.status(401).send({ success: false, message: 'Invalid token.' });
       }
     });
+
+    app.post('/api/auth/logout', (req, res) => {
+      try {
+        res.clearCookie('token', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        });
+
+        res.send({ success: true, message: 'Logged out successfully! 👋' });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
   } finally {
     // await client.close();
   }
