@@ -45,9 +45,7 @@ async function run() {
 
     app.get('/api/classes/featured', async (req, res) => {
       try {
-        const query = {
-          $or: [{ status: 'Approved' }, { status: { $exists: false } }],
-        };
+        const query = { status: 'Approved' };
         const cursor = classesCollection
           .find(query)
           .sort({ bookingCount: -1 })
@@ -63,6 +61,50 @@ async function run() {
       try {
         const cursor = forumCollection.find({}).sort({ _id: -1 }).limit(4);
         const result = await cursor.toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get('/api/classes', async (req, res) => {
+      try {
+        let query = { status: 'Approved' };
+
+        if (req.query.search) {
+          query.className = {
+            $regex: req.query.search,
+            $options: 'i',
+          };
+        }
+
+        if (req.query.category) {
+          const categoriesArray = req.query.category.split(',');
+          query.category = { $in: categoriesArray };
+        }
+
+        const cursor = classesCollection.find(query);
+        const result = await cursor.toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get('/api/classes/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+        const result = await classesCollection.findOne(query);
+
+        if (!result) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Class not found.' });
+        }
 
         res.send(result);
       } catch (error) {
