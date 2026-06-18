@@ -58,6 +58,17 @@ async function run() {
         res.status(500).send({ success: false, message: error.message });
       }
     });
+
+    app.get('/api/forum/latest', async (req, res) => {
+      try {
+        const cursor = forumCollection.find({}).sort({ _id: -1 }).limit(4);
+        const result = await cursor.toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
   } finally {
     // await client.close();
   }
