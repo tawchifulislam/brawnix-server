@@ -111,6 +111,49 @@ async function run() {
         res.status(500).send({ success: false, message: error.message });
       }
     });
+
+    app.get('/api/forum', async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 4;
+        const skipItems = (page - 1) * limit;
+        const totalPosts = await forumCollection.countDocuments({});
+        const cursor = forumCollection
+          .find({})
+          .sort({ _id: -1 })
+          .skip(skipItems)
+          .limit(limit);
+        const posts = await cursor.toArray();
+
+        res.send({
+          total: totalPosts,
+          page,
+          limit,
+          posts,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get('/api/forum/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+        const result = await forumCollection.findOne(query);
+
+        if (!result) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Article not found.' });
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
   } finally {
     // await client.close();
   }
