@@ -62,7 +62,6 @@ async function run() {
       try {
         const cursor = forumCollection.find({}).sort({ _id: -1 }).limit(4);
         const result = await cursor.toArray();
-
         res.send(result);
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
@@ -87,7 +86,6 @@ async function run() {
 
         const cursor = classesCollection.find(query);
         const result = await cursor.toArray();
-
         res.send(result);
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
@@ -97,7 +95,6 @@ async function run() {
     app.get('/api/classes/:id', async (req, res) => {
       try {
         const id = req.params.id;
-
         const query = { _id: new ObjectId(id) };
         const result = await classesCollection.findOne(query);
 
@@ -140,7 +137,6 @@ async function run() {
     app.get('/api/forum/:id', async (req, res) => {
       try {
         const id = req.params.id;
-
         const query = { _id: new ObjectId(id) };
         const result = await forumCollection.findOne(query);
 
@@ -159,7 +155,15 @@ async function run() {
     // Payment
     app.post('/api/create-payment-intent', async (req, res) => {
       try {
-        const { price } = req.body;
+        const { price, userEmail } = req.body;
+
+        if (!userEmail) {
+          return res.status(401).send({
+            success: false,
+            message: 'Unauthorized! Please login first.',
+          });
+        }
+
         const amount = parseInt(price * 100);
         if (!amount || amount < 1)
           return res.status(400).send({ message: 'Invalid amount' });
@@ -181,6 +185,13 @@ async function run() {
     app.post('/api/bookings', async (req, res) => {
       try {
         const bookingData = req.body;
+
+        if (!bookingData.userEmail) {
+          return res.status(401).send({
+            success: false,
+            message: 'Unauthorized! Please login to book.',
+          });
+        }
 
         const newBooking = {
           ...bookingData,
@@ -298,6 +309,13 @@ async function run() {
     app.post('/api/favorites', async (req, res) => {
       try {
         const favoriteData = req.body;
+
+        if (!favoriteData.userEmail) {
+          return res
+            .status(401)
+            .send({ success: false, message: 'Unauthorized! Login required.' });
+        }
+
         const exists = await favoritesCollection.findOne({
           userEmail: favoriteData.userEmail,
           classId: favoriteData.classId,
@@ -315,6 +333,94 @@ async function run() {
           message: 'Added to favorites successfully!',
           result,
         });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    // Trainer Recruitment
+    app.post('/api/trainer-applications', async (req, res) => {
+      try {
+        const applicationData = req.body;
+
+        const isExist = await database
+          .collection('trainer_applications')
+          .findOne({ email: applicationData.email });
+        if (isExist) {
+          return res.status(400).send({
+            success: false,
+            message: 'You have already submitted an application!',
+          });
+        }
+
+        const result = await database
+          .collection('trainer_applications')
+          .insertOne(applicationData);
+        res.send({
+          success: true,
+          message: 'Application submitted successfully!',
+          result,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get('/api/trainer-applications', async (req, res) => {
+      try {
+        const query = { status: 'Pending' };
+        const result = await database
+          .collection('trainer_applications')
+          .find(query)
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.patch('/api/trainer-applications/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { action, userEmail } = req.body;
+
+        const applicationFilter = { _id: new ObjectId(id) };
+
+        if (action === 'Approved') {
+          await database
+            .collection('trainer_applications')
+            .updateOne(applicationFilter, {
+              $set: { status: 'Approved' },
+            });
+
+          const userFilter = { email: userEmail };
+          const updateUserDoc = {
+            $set: { role: 'trainer' },
+          };
+          const userUpdateResult = await usersCollection.updateOne(
+            userFilter,
+            updateUserDoc,
+          );
+
+          return res.send({
+            success: true,
+            message: 'Application approved! User is now an Elite Trainer.',
+            userUpdateResult,
+          });
+        }
+
+        if (action === 'Rejected') {
+          await database
+            .collection('trainer_applications')
+            .updateOne(applicationFilter, {
+              $set: { status: 'Rejected' },
+            });
+          return res.send({
+            success: true,
+            message: 'Application has been rejected.',
+          });
+        }
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
