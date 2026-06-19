@@ -202,6 +202,27 @@ async function run() {
         res.status(500).send({ success: false, message: error.message });
       }
     });
+
+    app.get('/api/my-bookings', async (req, res) => {
+      try {
+        const email = req.query.email;
+        if (!email) {
+          return res
+            .status(400)
+            .send({ success: false, message: 'Email parameter is required' });
+        }
+
+        const query = { userEmail: email };
+        const result = await bookingsCollection
+          .find(query)
+          .sort({ _id: -1 })
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
   } finally {
     // await client.close();
   }
