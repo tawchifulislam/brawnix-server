@@ -3,6 +3,7 @@ const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -150,6 +151,53 @@ async function run() {
         }
 
         res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    // Payment
+    app.post('/api/create-payment-intent', async (req, res) => {
+      try {
+        const { price } = req.body;
+        const amount = parseInt(price * 100);
+        if (!amount || amount < 1)
+          return res.status(400).send({ message: 'Invalid amount' });
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'usd',
+          payment_method_types: ['card'],
+        });
+
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.post('/api/bookings', async (req, res) => {
+      try {
+        const bookingData = req.body;
+
+        const newBooking = {
+          ...bookingData,
+          createdAt: new Date(),
+        };
+        const bookingResult = await bookingsCollection.insertOne(newBooking);
+        const classFilter = { _id: new ObjectId(bookingData.classId) };
+        const updateDoc = {
+          $inc: { bookingCount: 1 },
+        };
+        await classesCollection.updateOne(classFilter, updateDoc);
+
+        res.send({
+          success: true,
+          message: 'Booking confirmed successfully! 🎉',
+          bookingResult,
+        });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
