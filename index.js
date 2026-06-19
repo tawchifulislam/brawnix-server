@@ -246,7 +246,7 @@ async function run() {
 
         res.send({
           success: true,
-          message: 'Booking cancelled successfully! ❌',
+          message: 'Booking cancelled successfully!',
           deleteResult,
         });
       } catch (error) {
@@ -287,7 +287,32 @@ async function run() {
         }
         res.send({
           success: true,
-          message: 'Removed from favorites! ❌',
+          message: 'Removed from favorites!',
+          result,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.post('/api/favorites', async (req, res) => {
+      try {
+        const favoriteData = req.body;
+        const exists = await favoritesCollection.findOne({
+          userEmail: favoriteData.userEmail,
+          classId: favoriteData.classId,
+        });
+
+        if (exists) {
+          return res
+            .status(400)
+            .send({ success: false, message: 'Already in your favorites!' });
+        }
+
+        const result = await favoritesCollection.insertOne(favoriteData);
+        res.send({
+          success: true,
+          message: 'Added to favorites successfully!',
           result,
         });
       } catch (error) {
