@@ -223,6 +223,77 @@ async function run() {
         res.status(500).send({ success: false, message: error.message });
       }
     });
+
+    app.delete('/api/bookings/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+
+        const booking = await bookingsCollection.findOne(query);
+        if (!booking) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Booking not found' });
+        }
+
+        const deleteResult = await bookingsCollection.deleteOne(query);
+
+        const classFilter = { _id: new ObjectId(booking.classId) };
+        const updateDoc = {
+          $inc: { bookingCount: -1 },
+        };
+        await classesCollection.updateOne(classFilter, updateDoc);
+
+        res.send({
+          success: true,
+          message: 'Booking cancelled successfully! ❌',
+          deleteResult,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get('/api/favorites', async (req, res) => {
+      try {
+        const email = req.query.email;
+        if (!email) {
+          return res
+            .status(400)
+            .send({ success: false, message: 'Email required' });
+        }
+        const query = { userEmail: email };
+
+        const result = await favoritesCollection
+          .find(query)
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.delete('/api/favorites/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const query = { _id: new ObjectId(id) };
+        const result = await favoritesCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Favorite not found' });
+        }
+        res.send({
+          success: true,
+          message: 'Removed from favorites! ❌',
+          result,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
   } finally {
     // await client.close();
   }
