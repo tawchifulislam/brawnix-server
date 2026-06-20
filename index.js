@@ -115,6 +115,10 @@ async function run() {
 
     app.get('/api/classes', async (req, res) => {
       try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 9;
+        const skipItems = (page - 1) * limit;
+
         let query = { status: 'Approved' };
 
         if (req.query.search) {
@@ -129,9 +133,20 @@ async function run() {
           query.category = { $in: categoriesArray };
         }
 
-        const cursor = classesCollection.find(query);
-        const result = await cursor.toArray();
-        res.send(result);
+        const totalClasses = await classesCollection.countDocuments(query);
+
+        const cursor = classesCollection
+          .find(query)
+          .skip(skipItems)
+          .limit(limit);
+        const classes = await cursor.toArray();
+
+        res.send({
+          total: totalClasses,
+          page,
+          limit,
+          classes,
+        });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
