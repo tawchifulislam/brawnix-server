@@ -584,6 +584,267 @@ async function run() {
         }
       },
     );
+
+    // Classes (Trainer)
+    app.post('/api/classes', verifyToken, verifyTrainer, async (req, res) => {
+      try {
+        const classData = req.body;
+
+        if (classData.trainerEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Email mismatch' });
+        }
+
+        const newClass = {
+          ...classData,
+          status: 'Pending',
+          bookingCount: 0,
+          createdAt: new Date(),
+        };
+
+        const result = await classesCollection.insertOne(newClass);
+        res.send({
+          success: true,
+          message: 'Class submitted! Waiting for admin approval.',
+          result,
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get(
+      '/api/classes/trainer/:email',
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const email = req.params.email;
+
+          if (email !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const query = { trainerEmail: email };
+          const result = await classesCollection
+            .find(query)
+            .sort({ _id: -1 })
+            .toArray();
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.patch(
+      '/api/classes/:id',
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const updatedData = req.body;
+
+          const existingClass = await classesCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!existingClass) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Class not found' });
+          }
+          if (existingClass.trainerEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const updateDoc = {
+            $set: {
+              className: updatedData.className,
+              category: updatedData.category,
+              difficultyLevel: updatedData.difficultyLevel,
+              duration: updatedData.duration,
+              schedule: updatedData.schedule,
+              price: updatedData.price,
+              description: updatedData.description,
+              image: updatedData.image,
+            },
+          };
+
+          const result = await classesCollection.updateOne(
+            { _id: new ObjectId(id) },
+            updateDoc,
+          );
+          res.send({
+            success: true,
+            message: 'Class updated successfully!',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.delete(
+      '/api/classes/:id',
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+
+          const existingClass = await classesCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!existingClass) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Class not found' });
+          }
+          if (existingClass.trainerEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const result = await classesCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+          res.send({
+            success: true,
+            message: 'Class deleted successfully!',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.get(
+      '/api/classes/:id/students',
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+
+          const targetClass = await classesCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!targetClass) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Class not found' });
+          }
+          if (targetClass.trainerEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const students = await bookingsCollection
+            .find({ classId: id })
+            .toArray();
+          res.send(students);
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    // Forum (Trainer)
+
+    app.post('/api/forum', verifyToken, verifyTrainer, async (req, res) => {
+      try {
+        const postData = req.body;
+
+        if (postData.authorEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Email mismatch' });
+        }
+
+        const newPost = {
+          ...postData,
+          authorName: req.user.name,
+          authorImage: req.user.image,
+          createdAt: new Date(),
+        };
+
+        const result = await forumCollection.insertOne(newPost);
+        res.send({ success: true, message: 'Forum post published!', result });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.get(
+      '/api/forum/trainer/:email',
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const email = req.params.email;
+
+          if (email !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const result = await forumCollection
+            .find({ authorEmail: email })
+            .sort({ _id: -1 })
+            .toArray();
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.delete(
+      '/api/forum/:id',
+      verifyToken,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+
+          const existingPost = await forumCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!existingPost) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Post not found' });
+          }
+          if (existingPost.authorEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const result = await forumCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+          res.send({
+            success: true,
+            message: 'Post deleted successfully!',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
   } finally {
     // await client.close();
   }
