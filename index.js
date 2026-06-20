@@ -4,6 +4,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const jose = require('jose-cjs');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -30,6 +31,50 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+async function verifyToken(req, res, next) {
+  try {
+    const cookies = req.headers.cookie;
+
+    if (!cookies) {
+      return res.status(401).send({
+        success: false,
+        message: 'Unauthorized! No session cookie found.',
+      });
+    }
+
+    const authResponse = await fetch(
+      `${process.env.FRONTEND_URL || 'http://localhost:3000'}/api/auth/get-session`,
+      {
+        headers: {
+          cookie: cookies,
+        },
+      },
+    );
+
+    if (!authResponse.ok) {
+      return res
+        .status(401)
+        .send({ success: false, message: 'Unauthorized session.' });
+    }
+
+    const sessionData = await authResponse.json();
+
+    if (sessionData && sessionData.user) {
+      req.user = sessionData.user;
+      return next();
+    }
+
+    return res.status(401).send({
+      success: false,
+      message: 'Unauthorized! Invalid or expired session.',
+    });
+  } catch (error) {
+    return res
+      .status(403)
+      .send({ success: false, message: 'Forbidden! Verification failed.' });
+  }
+}
 
 async function run() {
   try {
@@ -92,7 +137,7 @@ async function run() {
       }
     });
 
-    app.get('/api/classes/:id', async (req, res) => {
+    app.get('/api/classes/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -134,7 +179,7 @@ async function run() {
       }
     });
 
-    app.get('/api/forum/:id', async (req, res) => {
+    app.get('/api/forum/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -153,7 +198,7 @@ async function run() {
     });
 
     // Payment
-    app.post('/api/create-payment-intent', async (req, res) => {
+    app.post('/api/create-payment-intent', verifyToken, async (req, res) => {
       try {
         const { price, userEmail } = req.body;
 
