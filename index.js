@@ -76,6 +76,33 @@ async function verifyToken(req, res, next) {
   }
 }
 
+const verifyUser = (req, res, next) => {
+  if (req.user?.role !== 'user') {
+    return res
+      .status(403)
+      .send({ success: false, message: 'Forbidden access' });
+  }
+  next();
+};
+
+const verifyTrainer = (req, res, next) => {
+  if (req.user?.role !== 'trainer') {
+    return res
+      .status(403)
+      .send({ success: false, message: 'Forbidden access' });
+  }
+  next();
+};
+
+const verifyAdmin = (req, res, next) => {
+  if (req.user?.role !== 'admin') {
+    return res
+      .status(403)
+      .send({ success: false, message: 'Forbidden access' });
+  }
+  next();
+};
+
 async function run() {
   try {
     await client.connect();
@@ -242,15 +269,15 @@ async function run() {
       }
     });
 
-    app.post('/api/bookings', async (req, res) => {
+    // Bookings
+    app.post('/api/bookings', verifyToken, async (req, res) => {
       try {
         const bookingData = req.body;
 
-        if (!bookingData.userEmail) {
-          return res.status(401).send({
-            success: false,
-            message: 'Unauthorized! Please login to book.',
-          });
+        if (bookingData.userEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Email mismatch' });
         }
 
         const newBooking = {
@@ -266,7 +293,7 @@ async function run() {
 
         res.send({
           success: true,
-          message: 'Booking confirmed successfully! 🎉',
+          message: 'Booking confirmed successfully!',
           bookingResult,
         });
       } catch (error) {
@@ -274,7 +301,7 @@ async function run() {
       }
     });
 
-    app.get('/api/bookings/check', async (req, res) => {
+    app.get('/api/bookings/check', verifyToken, async (req, res) => {
       try {
         const { email, classId } = req.query;
         if (!email || !classId) {
@@ -282,6 +309,12 @@ async function run() {
             success: false,
             message: 'Email and classId are required',
           });
+        }
+
+        if (email !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
         }
 
         const existing = await bookingsCollection.findOne({
@@ -295,13 +328,19 @@ async function run() {
       }
     });
 
-    app.get('/api/my-bookings', async (req, res) => {
+    app.get('/api/my-bookings', verifyToken, async (req, res) => {
       try {
         const email = req.query.email;
         if (!email) {
           return res
             .status(400)
             .send({ success: false, message: 'Email parameter is required' });
+        }
+
+        if (email !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
         }
 
         const query = { userEmail: email };
@@ -316,7 +355,7 @@ async function run() {
       }
     });
 
-    app.delete('/api/bookings/:id', async (req, res) => {
+    app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
@@ -326,6 +365,12 @@ async function run() {
           return res
             .status(404)
             .send({ success: false, message: 'Booking not found' });
+        }
+
+        if (booking.userEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
         }
 
         const deleteResult = await bookingsCollection.deleteOne(query);
@@ -346,7 +391,8 @@ async function run() {
       }
     });
 
-    app.get('/api/favorites', async (req, res) => {
+    // Favorites
+    app.get('/api/favorites', verifyToken, async (req, res) => {
       try {
         const email = req.query.email;
         if (!email) {
@@ -354,6 +400,13 @@ async function run() {
             .status(400)
             .send({ success: false, message: 'Email required' });
         }
+
+        if (email !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
+        }
+
         const query = { userEmail: email };
 
         const result = await favoritesCollection
@@ -366,17 +419,26 @@ async function run() {
       }
     });
 
-    app.delete('/api/favorites/:id', async (req, res) => {
+    app.delete('/api/favorites/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
         const query = { _id: new ObjectId(id) };
-        const result = await favoritesCollection.deleteOne(query);
 
-        if (result.deletedCount === 0) {
+        const favorite = await favoritesCollection.findOne(query);
+        if (!favorite) {
           return res
             .status(404)
             .send({ success: false, message: 'Favorite not found' });
         }
+
+        if (favorite.userEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
+        }
+
+        const result = await favoritesCollection.deleteOne(query);
+
         res.send({
           success: true,
           message: 'Removed from favorites!',
@@ -387,14 +449,14 @@ async function run() {
       }
     });
 
-    app.post('/api/favorites', async (req, res) => {
+    app.post('/api/favorites', verifyToken, async (req, res) => {
       try {
         const favoriteData = req.body;
 
-        if (!favoriteData.userEmail) {
+        if (favoriteData.userEmail !== req.user.email) {
           return res
-            .status(401)
-            .send({ success: false, message: 'Unauthorized! Login required.' });
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
         }
 
         const exists = await favoritesCollection.findOne({
@@ -420,9 +482,15 @@ async function run() {
     });
 
     // Trainer Recruitment
-    app.post('/api/trainer-applications', async (req, res) => {
+    app.post('/api/trainer-applications', verifyToken, async (req, res) => {
       try {
         const applicationData = req.body;
+
+        if (applicationData.email !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Email mismatch' });
+        }
 
         const isExist = await database
           .collection('trainer_applications')
@@ -447,65 +515,75 @@ async function run() {
       }
     });
 
-    app.get('/api/trainer-applications', async (req, res) => {
-      try {
-        const query = { status: 'Pending' };
-        const result = await database
-          .collection('trainer_applications')
-          .find(query)
-          .sort({ _id: -1 })
-          .toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
-    app.patch('/api/trainer-applications/:id', async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { action, userEmail } = req.body;
-
-        const applicationFilter = { _id: new ObjectId(id) };
-
-        if (action === 'Approved') {
-          await database
+    app.get(
+      '/api/trainer-applications',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const query = { status: 'Pending' };
+          const result = await database
             .collection('trainer_applications')
-            .updateOne(applicationFilter, {
-              $set: { status: 'Approved' },
-            });
-
-          const userFilter = { email: userEmail };
-          const updateUserDoc = {
-            $set: { role: 'trainer' },
-          };
-          const userUpdateResult = await usersCollection.updateOne(
-            userFilter,
-            updateUserDoc,
-          );
-
-          return res.send({
-            success: true,
-            message: 'Application approved! User is now an Elite Trainer.',
-            userUpdateResult,
-          });
+            .find(query)
+            .sort({ _id: -1 })
+            .toArray();
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
+      },
+    );
 
-        if (action === 'Rejected') {
-          await database
-            .collection('trainer_applications')
-            .updateOne(applicationFilter, {
-              $set: { status: 'Rejected' },
+    app.patch(
+      '/api/trainer-applications/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { action, userEmail } = req.body;
+
+          const applicationFilter = { _id: new ObjectId(id) };
+
+          if (action === 'Approved') {
+            await database
+              .collection('trainer_applications')
+              .updateOne(applicationFilter, {
+                $set: { status: 'Approved' },
+              });
+
+            const userFilter = { email: userEmail };
+            const updateUserDoc = {
+              $set: { role: 'trainer' },
+            };
+            const userUpdateResult = await usersCollection.updateOne(
+              userFilter,
+              updateUserDoc,
+            );
+
+            return res.send({
+              success: true,
+              message: 'Application approved! User is now an Elite Trainer.',
+              userUpdateResult,
             });
-          return res.send({
-            success: true,
-            message: 'Application has been rejected.',
-          });
+          }
+
+          if (action === 'Rejected') {
+            await database
+              .collection('trainer_applications')
+              .updateOne(applicationFilter, {
+                $set: { status: 'Rejected' },
+              });
+            return res.send({
+              success: true,
+              message: 'Application has been rejected.',
+            });
+          }
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
   } finally {
     // await client.close();
   }
