@@ -274,6 +274,27 @@ async function run() {
       }
     });
 
+    app.get('/api/bookings/check', async (req, res) => {
+      try {
+        const { email, classId } = req.query;
+        if (!email || !classId) {
+          return res.status(400).send({
+            success: false,
+            message: 'Email and classId are required',
+          });
+        }
+
+        const existing = await bookingsCollection.findOne({
+          userEmail: email,
+          classId: classId,
+        });
+
+        res.send({ alreadyBooked: !!existing });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     app.get('/api/my-bookings', async (req, res) => {
       try {
         const email = req.query.email;
