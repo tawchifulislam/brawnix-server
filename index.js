@@ -494,7 +494,8 @@ async function run() {
 
         const isExist = await database
           .collection('trainer_applications')
-          .findOne({ email: applicationData.email });
+          .findOne({ email: applicationData.email, status: 'Pending' });
+
         if (isExist) {
           return res.status(400).send({
             success: false,
@@ -541,7 +542,7 @@ async function run() {
       async (req, res) => {
         try {
           const id = req.params.id;
-          const { action, userEmail } = req.body;
+          const { action, userEmail, feedback } = req.body;
 
           const applicationFilter = { _id: new ObjectId(id) };
 
@@ -549,7 +550,7 @@ async function run() {
             await database
               .collection('trainer_applications')
               .updateOne(applicationFilter, {
-                $set: { status: 'Approved' },
+                $set: { status: 'Approved', feedback: feedback || '' },
               });
 
             const userFilter = { email: userEmail };
@@ -572,7 +573,7 @@ async function run() {
             await database
               .collection('trainer_applications')
               .updateOne(applicationFilter, {
-                $set: { status: 'Rejected' },
+                $set: { status: 'Rejected', feedback: feedback || '' },
               });
             return res.send({
               success: true,
@@ -845,6 +846,223 @@ async function run() {
         }
       },
     );
+
+    // Users (Admin)
+    app.get('/api/users', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await usersCollection.find().sort({ _id: -1 }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.patch(
+      '/api/users/block/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: 'blocked' } },
+          );
+          res.send({ success: true, message: 'User blocked.', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.patch(
+      '/api/users/unblock/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status: 'active' } },
+          );
+          res.send({ success: true, message: 'User unblocked.', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.patch(
+      '/api/users/make-admin/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: 'admin' } },
+          );
+          res.send({
+            success: true,
+            message: 'User promoted to Admin.',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    // Trainers (Admin)
+    app.get('/api/trainers', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await usersCollection
+          .find({ role: 'trainer' })
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.patch(
+      '/api/trainers/demote/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: 'user' } },
+          );
+          res.send({
+            success: true,
+            message: 'Trainer demoted to User.',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    // Classes (Admin moderation)
+    app.get('/api/classes/all', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await classesCollection
+          .find()
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.patch(
+      '/api/classes/status/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { status } = req.body;
+
+          if (!['Approved', 'Rejected'].includes(status)) {
+            return res
+              .status(400)
+              .send({ success: false, message: 'Invalid status value' });
+          }
+
+          const result = await classesCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status } },
+          );
+          res.send({
+            success: true,
+            message: `Class ${status.toLowerCase()}!`,
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    app.delete(
+      '/api/classes/admin/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await classesCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+          res.send({ success: true, message: 'Class deleted.', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    // Transactions (Admin, read-only)
+    app.get('/api/transactions', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await bookingsCollection
+          .find()
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    // Forum moderation (Admin)
+
+    app.get('/api/forum/all', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await forumCollection.find().sort({ _id: -1 }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.delete(
+      '/api/forum/admin/:id',
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const result = await forumCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+          res.send({ success: true, message: 'Post removed.', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    // Admin stats
+    app.get('/api/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const totalUsers = await usersCollection.countDocuments();
+        const totalClasses = await classesCollection.countDocuments();
+        const totalBookings = await bookingsCollection.countDocuments();
+
+        res.send({ totalUsers, totalClasses, totalBookings });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
   } finally {
     // await client.close();
   }
