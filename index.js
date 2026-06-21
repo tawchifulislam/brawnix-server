@@ -221,6 +221,15 @@ async function run() {
       }
     });
 
+    app.get('/api/forum/all', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await forumCollection.find().sort({ _id: -1 }).toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     app.get('/api/forum/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
@@ -234,6 +243,36 @@ async function run() {
         }
 
         res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.post('/api/forum', verifyToken, async (req, res) => {
+      try {
+        if (req.user.role !== 'trainer' && req.user.role !== 'admin') {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
+        }
+
+        const postData = req.body;
+
+        if (postData.authorEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Email mismatch' });
+        }
+
+        const newPost = {
+          ...postData,
+          authorName: req.user.name,
+          authorImage: req.user.image,
+          createdAt: new Date(),
+        };
+
+        const result = await forumCollection.insertOne(newPost);
+        res.send({ success: true, message: 'Forum post published!', result });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
