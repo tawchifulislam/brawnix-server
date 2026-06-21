@@ -180,6 +180,19 @@ async function run() {
       }
     });
 
+    // ✅ MOVED HERE: literal route must come before '/api/classes/:id'
+    app.get('/api/classes/all', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const result = await classesCollection
+          .find()
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     app.get('/api/classes/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
@@ -222,6 +235,7 @@ async function run() {
       }
     });
 
+    // ✅ MOVED HERE: literal route must come before '/api/forum/:id'
     app.get('/api/forum/all', verifyToken, verifyAdmin, async (req, res) => {
       try {
         const result = await forumCollection.find().sort({ _id: -1 }).toArray();
@@ -964,31 +978,6 @@ async function run() {
     );
 
     // Forum (Trainer)
-
-    app.post('/api/forum', verifyToken, verifyTrainer, async (req, res) => {
-      try {
-        const postData = req.body;
-
-        if (postData.authorEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Email mismatch' });
-        }
-
-        const newPost = {
-          ...postData,
-          authorName: req.user.name,
-          authorImage: req.user.image,
-          createdAt: new Date(),
-        };
-
-        const result = await forumCollection.insertOne(newPost);
-        res.send({ success: true, message: 'Forum post published!', result });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
     app.get(
       '/api/forum/trainer/:email',
       verifyToken,
@@ -1154,18 +1143,6 @@ async function run() {
     );
 
     // Classes (Admin moderation)
-    app.get('/api/classes/all', verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const result = await classesCollection
-          .find()
-          .sort({ _id: -1 })
-          .toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
     app.patch(
       '/api/classes/status/:id',
       verifyToken,
@@ -1227,16 +1204,6 @@ async function run() {
     });
 
     // Forum moderation (Admin)
-
-    app.get('/api/forum/all', verifyToken, verifyAdmin, async (req, res) => {
-      try {
-        const result = await forumCollection.find().sort({ _id: -1 }).toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
     app.delete(
       '/api/forum/admin/:id',
       verifyToken,
