@@ -103,6 +103,16 @@ const verifyAdmin = (req, res, next) => {
   next();
 };
 
+const checkNotBlocked = (req, res, next) => {
+  if (req.user?.status === 'blocked') {
+    return res.status(403).send({
+      success: false,
+      message: 'Action restricted by Admin',
+    });
+  }
+  next();
+};
+
 async function run() {
   try {
     await client.connect();
@@ -180,7 +190,6 @@ async function run() {
       }
     });
 
-    // ✅ MOVED HERE: literal route must come before '/api/classes/:id'
     app.get('/api/classes/all', verifyToken, verifyAdmin, async (req, res) => {
       try {
         const result = await classesCollection
@@ -235,7 +244,6 @@ async function run() {
       }
     });
 
-    // ✅ MOVED HERE: literal route must come before '/api/forum/:id'
     app.get('/api/forum/all', verifyToken, verifyAdmin, async (req, res) => {
       try {
         const result = await forumCollection.find().sort({ _id: -1 }).toArray();
@@ -245,74 +253,84 @@ async function run() {
       }
     });
 
-    app.patch('/api/forum/like/:id', verifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const email = req.user.email;
+    app.patch(
+      '/api/forum/like/:id',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const email = req.user.email;
 
-        const post = await forumCollection.findOne({ _id: new ObjectId(id) });
-        if (!post) {
-          return res
-            .status(404)
-            .send({ success: false, message: 'Post not found' });
+          const post = await forumCollection.findOne({ _id: new ObjectId(id) });
+          if (!post) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Post not found' });
+          }
+
+          const likes = post.likes || [];
+          const dislikes = post.dislikes || [];
+
+          let updateDoc;
+          if (likes.includes(email)) {
+            updateDoc = { $pull: { likes: email } };
+          } else {
+            updateDoc = {
+              $addToSet: { likes: email },
+              $pull: { dislikes: email },
+            };
+          }
+
+          const result = await forumCollection.updateOne(
+            { _id: new ObjectId(id) },
+            updateDoc,
+          );
+          res.send({ success: true, result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
+      },
+    );
 
-        const likes = post.likes || [];
-        const dislikes = post.dislikes || [];
+    app.patch(
+      '/api/forum/dislike/:id',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const email = req.user.email;
 
-        let updateDoc;
-        if (likes.includes(email)) {
-          updateDoc = { $pull: { likes: email } };
-        } else {
-          updateDoc = {
-            $addToSet: { likes: email },
-            $pull: { dislikes: email },
-          };
+          const post = await forumCollection.findOne({ _id: new ObjectId(id) });
+          if (!post) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Post not found' });
+          }
+
+          const dislikes = post.dislikes || [];
+
+          let updateDoc;
+          if (dislikes.includes(email)) {
+            updateDoc = { $pull: { dislikes: email } };
+          } else {
+            updateDoc = {
+              $addToSet: { dislikes: email },
+              $pull: { likes: email },
+            };
+          }
+
+          const result = await forumCollection.updateOne(
+            { _id: new ObjectId(id) },
+            updateDoc,
+          );
+          res.send({ success: true, result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-
-        const result = await forumCollection.updateOne(
-          { _id: new ObjectId(id) },
-          updateDoc,
-        );
-        res.send({ success: true, result });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
-    app.patch('/api/forum/dislike/:id', verifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const email = req.user.email;
-
-        const post = await forumCollection.findOne({ _id: new ObjectId(id) });
-        if (!post) {
-          return res
-            .status(404)
-            .send({ success: false, message: 'Post not found' });
-        }
-
-        const dislikes = post.dislikes || [];
-
-        let updateDoc;
-        if (dislikes.includes(email)) {
-          updateDoc = { $pull: { dislikes: email } };
-        } else {
-          updateDoc = {
-            $addToSet: { dislikes: email },
-            $pull: { likes: email },
-          };
-        }
-
-        const result = await forumCollection.updateOne(
-          { _id: new ObjectId(id) },
-          updateDoc,
-        );
-        res.send({ success: true, result });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
 
     app.get('/api/forum/:id', verifyToken, async (req, res) => {
       try {
@@ -332,7 +350,7 @@ async function run() {
       }
     });
 
-    app.post('/api/forum', verifyToken, async (req, res) => {
+    app.post('/api/forum', verifyToken, checkNotBlocked, async (req, res) => {
       try {
         if (req.user.role !== 'trainer' && req.user.role !== 'admin') {
           return res
@@ -376,147 +394,172 @@ async function run() {
       }
     });
 
-    app.post('/api/comments', verifyToken, async (req, res) => {
-      try {
-        const commentData = req.body;
+    app.post(
+      '/api/comments',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const commentData = req.body;
 
-        if (commentData.authorEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Email mismatch' });
+          if (commentData.authorEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Email mismatch' });
+          }
+
+          const newComment = {
+            ...commentData,
+            authorName: req.user.name,
+            authorImage: req.user.image,
+            createdAt: new Date(),
+          };
+
+          const result = await commentsCollection.insertOne(newComment);
+          res.send({ success: true, message: 'Comment posted!', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
+      },
+    );
 
-        const newComment = {
-          ...commentData,
-          authorName: req.user.name,
-          authorImage: req.user.image,
-          createdAt: new Date(),
-        };
+    app.patch(
+      '/api/comments/:id',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { text } = req.body;
 
-        const result = await commentsCollection.insertOne(newComment);
-        res.send({ success: true, message: 'Comment posted!', result });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+          const comment = await commentsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!comment) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Comment not found' });
+          }
+          if (comment.authorEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
 
-    app.patch('/api/comments/:id', verifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const { text } = req.body;
-
-        const comment = await commentsCollection.findOne({
-          _id: new ObjectId(id),
-        });
-        if (!comment) {
-          return res
-            .status(404)
-            .send({ success: false, message: 'Comment not found' });
+          const result = await commentsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { text } },
+          );
+          res.send({ success: true, message: 'Comment updated!', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-        if (comment.authorEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Forbidden access' });
+      },
+    );
+
+    app.delete(
+      '/api/comments/:id',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+
+          const comment = await commentsCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!comment) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Comment not found' });
+          }
+          if (comment.authorEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const result = await commentsCollection.deleteOne({
+            _id: new ObjectId(id),
+          });
+          res.send({ success: true, message: 'Comment deleted!', result });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-
-        const result = await commentsCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { text } },
-        );
-        res.send({ success: true, message: 'Comment updated!', result });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
-    app.delete('/api/comments/:id', verifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-
-        const comment = await commentsCollection.findOne({
-          _id: new ObjectId(id),
-        });
-        if (!comment) {
-          return res
-            .status(404)
-            .send({ success: false, message: 'Comment not found' });
-        }
-        if (comment.authorEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Forbidden access' });
-        }
-
-        const result = await commentsCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
-        res.send({ success: true, message: 'Comment deleted!', result });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
 
     // Payment
-    app.post('/api/create-payment-intent', verifyToken, async (req, res) => {
-      try {
-        const { price, userEmail } = req.body;
+    app.post(
+      '/api/create-payment-intent',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const { price, userEmail } = req.body;
 
-        if (!userEmail) {
-          return res.status(401).send({
-            success: false,
-            message: 'Unauthorized! Please login first.',
+          if (!userEmail) {
+            return res.status(401).send({
+              success: false,
+              message: 'Unauthorized! Please login first.',
+            });
+          }
+
+          const amount = parseInt(price * 100);
+          if (!amount || amount < 1)
+            return res.status(400).send({ message: 'Invalid amount' });
+
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount: amount,
+            currency: 'usd',
+            payment_method_types: ['card'],
           });
+
+          res.send({
+            clientSecret: paymentIntent.client_secret,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-
-        const amount = parseInt(price * 100);
-        if (!amount || amount < 1)
-          return res.status(400).send({ message: 'Invalid amount' });
-
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: amount,
-          currency: 'usd',
-          payment_method_types: ['card'],
-        });
-
-        res.send({
-          clientSecret: paymentIntent.client_secret,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
 
     // Bookings
-    app.post('/api/bookings', verifyToken, async (req, res) => {
-      try {
-        const bookingData = req.body;
+    app.post(
+      '/api/bookings',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const bookingData = req.body;
 
-        if (bookingData.userEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Email mismatch' });
+          if (bookingData.userEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Email mismatch' });
+          }
+
+          const newBooking = {
+            ...bookingData,
+            createdAt: new Date(),
+          };
+          const bookingResult = await bookingsCollection.insertOne(newBooking);
+          const classFilter = { _id: new ObjectId(bookingData.classId) };
+          const updateDoc = {
+            $inc: { bookingCount: 1 },
+          };
+          await classesCollection.updateOne(classFilter, updateDoc);
+
+          res.send({
+            success: true,
+            message: 'Booking confirmed successfully!',
+            bookingResult,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-
-        const newBooking = {
-          ...bookingData,
-          createdAt: new Date(),
-        };
-        const bookingResult = await bookingsCollection.insertOne(newBooking);
-        const classFilter = { _id: new ObjectId(bookingData.classId) };
-        const updateDoc = {
-          $inc: { bookingCount: 1 },
-        };
-        await classesCollection.updateOne(classFilter, updateDoc);
-
-        res.send({
-          success: true,
-          message: 'Booking confirmed successfully!',
-          bookingResult,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
 
     app.get('/api/bookings/check', verifyToken, async (req, res) => {
       try {
@@ -572,41 +615,46 @@ async function run() {
       }
     });
 
-    app.delete('/api/bookings/:id', verifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
+    app.delete(
+      '/api/bookings/:id',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const query = { _id: new ObjectId(id) };
 
-        const booking = await bookingsCollection.findOne(query);
-        if (!booking) {
-          return res
-            .status(404)
-            .send({ success: false, message: 'Booking not found' });
+          const booking = await bookingsCollection.findOne(query);
+          if (!booking) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Booking not found' });
+          }
+
+          if (booking.userEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const deleteResult = await bookingsCollection.deleteOne(query);
+
+          const classFilter = { _id: new ObjectId(booking.classId) };
+          const updateDoc = {
+            $inc: { bookingCount: -1 },
+          };
+          await classesCollection.updateOne(classFilter, updateDoc);
+
+          res.send({
+            success: true,
+            message: 'Booking cancelled successfully!',
+            deleteResult,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-
-        if (booking.userEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Forbidden access' });
-        }
-
-        const deleteResult = await bookingsCollection.deleteOne(query);
-
-        const classFilter = { _id: new ObjectId(booking.classId) };
-        const updateDoc = {
-          $inc: { bookingCount: -1 },
-        };
-        await classesCollection.updateOne(classFilter, updateDoc);
-
-        res.send({
-          success: true,
-          message: 'Booking cancelled successfully!',
-          deleteResult,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
 
     // Favorites
     app.get('/api/favorites', verifyToken, async (req, res) => {
@@ -636,102 +684,117 @@ async function run() {
       }
     });
 
-    app.delete('/api/favorites/:id', verifyToken, async (req, res) => {
-      try {
-        const id = req.params.id;
-        const query = { _id: new ObjectId(id) };
+    app.delete(
+      '/api/favorites/:id',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const query = { _id: new ObjectId(id) };
 
-        const favorite = await favoritesCollection.findOne(query);
-        if (!favorite) {
-          return res
-            .status(404)
-            .send({ success: false, message: 'Favorite not found' });
-        }
+          const favorite = await favoritesCollection.findOne(query);
+          if (!favorite) {
+            return res
+              .status(404)
+              .send({ success: false, message: 'Favorite not found' });
+          }
 
-        if (favorite.userEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Forbidden access' });
-        }
+          if (favorite.userEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
 
-        const result = await favoritesCollection.deleteOne(query);
+          const result = await favoritesCollection.deleteOne(query);
 
-        res.send({
-          success: true,
-          message: 'Removed from favorites!',
-          result,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
-    app.post('/api/favorites', verifyToken, async (req, res) => {
-      try {
-        const favoriteData = req.body;
-
-        if (favoriteData.userEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Forbidden access' });
-        }
-
-        const exists = await favoritesCollection.findOne({
-          userEmail: favoriteData.userEmail,
-          classId: favoriteData.classId,
-        });
-
-        if (exists) {
-          return res
-            .status(400)
-            .send({ success: false, message: 'Already in your favorites!' });
-        }
-
-        const result = await favoritesCollection.insertOne(favoriteData);
-        res.send({
-          success: true,
-          message: 'Added to favorites successfully!',
-          result,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
-
-    // Trainer Recruitment
-    app.post('/api/trainer-applications', verifyToken, async (req, res) => {
-      try {
-        const applicationData = req.body;
-
-        if (applicationData.email !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Email mismatch' });
-        }
-
-        const isExist = await database
-          .collection('trainer_applications')
-          .findOne({ email: applicationData.email, status: 'Pending' });
-
-        if (isExist) {
-          return res.status(400).send({
-            success: false,
-            message: 'You have already submitted an application!',
+          res.send({
+            success: true,
+            message: 'Removed from favorites!',
+            result,
           });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
+      },
+    );
 
-        const result = await database
-          .collection('trainer_applications')
-          .insertOne(applicationData);
-        res.send({
-          success: true,
-          message: 'Application submitted successfully!',
-          result,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+    app.post(
+      '/api/favorites',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const favoriteData = req.body;
+
+          if (favoriteData.userEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Forbidden access' });
+          }
+
+          const exists = await favoritesCollection.findOne({
+            userEmail: favoriteData.userEmail,
+            classId: favoriteData.classId,
+          });
+
+          if (exists) {
+            return res
+              .status(400)
+              .send({ success: false, message: 'Already in your favorites!' });
+          }
+
+          const result = await favoritesCollection.insertOne(favoriteData);
+          res.send({
+            success: true,
+            message: 'Added to favorites successfully!',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
+
+    // Trainer Application
+    app.post(
+      '/api/trainer-applications',
+      verifyToken,
+      checkNotBlocked,
+      async (req, res) => {
+        try {
+          const applicationData = req.body;
+
+          if (applicationData.email !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Email mismatch' });
+          }
+
+          const isExist = await database
+            .collection('trainer_applications')
+            .findOne({ email: applicationData.email, status: 'Pending' });
+
+          if (isExist) {
+            return res.status(400).send({
+              success: false,
+              message: 'You have already submitted an application!',
+            });
+          }
+
+          const result = await database
+            .collection('trainer_applications')
+            .insertOne(applicationData);
+          res.send({
+            success: true,
+            message: 'Application submitted successfully!',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
+        }
+      },
+    );
 
     app.get(
       '/api/trainer-applications',
@@ -804,33 +867,39 @@ async function run() {
     );
 
     // Classes (Trainer)
-    app.post('/api/classes', verifyToken, verifyTrainer, async (req, res) => {
-      try {
-        const classData = req.body;
+    app.post(
+      '/api/classes',
+      verifyToken,
+      checkNotBlocked,
+      verifyTrainer,
+      async (req, res) => {
+        try {
+          const classData = req.body;
 
-        if (classData.trainerEmail !== req.user.email) {
-          return res
-            .status(403)
-            .send({ success: false, message: 'Email mismatch' });
+          if (classData.trainerEmail !== req.user.email) {
+            return res
+              .status(403)
+              .send({ success: false, message: 'Email mismatch' });
+          }
+
+          const newClass = {
+            ...classData,
+            status: 'Pending',
+            bookingCount: 0,
+            createdAt: new Date(),
+          };
+
+          const result = await classesCollection.insertOne(newClass);
+          res.send({
+            success: true,
+            message: 'Class submitted! Waiting for admin approval.',
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({ success: false, message: error.message });
         }
-
-        const newClass = {
-          ...classData,
-          status: 'Pending',
-          bookingCount: 0,
-          createdAt: new Date(),
-        };
-
-        const result = await classesCollection.insertOne(newClass);
-        res.send({
-          success: true,
-          message: 'Class submitted! Waiting for admin approval.',
-          result,
-        });
-      } catch (error) {
-        res.status(500).send({ success: false, message: error.message });
-      }
-    });
+      },
+    );
 
     app.get(
       '/api/classes/trainer/:email',
@@ -861,6 +930,7 @@ async function run() {
     app.patch(
       '/api/classes/:id',
       verifyToken,
+      checkNotBlocked,
       verifyTrainer,
       async (req, res) => {
         try {
@@ -912,6 +982,7 @@ async function run() {
     app.delete(
       '/api/classes/:id',
       verifyToken,
+      checkNotBlocked,
       verifyTrainer,
       async (req, res) => {
         try {
@@ -1006,6 +1077,7 @@ async function run() {
     app.delete(
       '/api/forum/:id',
       verifyToken,
+      checkNotBlocked,
       verifyTrainer,
       async (req, res) => {
         try {
