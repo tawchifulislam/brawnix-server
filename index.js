@@ -115,6 +115,7 @@ async function run() {
     const bookingsCollection = database.collection('bookings');
     const favoritesCollection = database.collection('favorites');
     const forumCollection = database.collection('forum');
+    const commentsCollection = database.collection('comments');
 
     app.get('/api/classes/featured', async (req, res) => {
       try {
@@ -230,6 +231,75 @@ async function run() {
       }
     });
 
+    app.patch('/api/forum/like/:id', verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const email = req.user.email;
+
+        const post = await forumCollection.findOne({ _id: new ObjectId(id) });
+        if (!post) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Post not found' });
+        }
+
+        const likes = post.likes || [];
+        const dislikes = post.dislikes || [];
+
+        let updateDoc;
+        if (likes.includes(email)) {
+          updateDoc = { $pull: { likes: email } };
+        } else {
+          updateDoc = {
+            $addToSet: { likes: email },
+            $pull: { dislikes: email },
+          };
+        }
+
+        const result = await forumCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updateDoc,
+        );
+        res.send({ success: true, result });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.patch('/api/forum/dislike/:id', verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const email = req.user.email;
+
+        const post = await forumCollection.findOne({ _id: new ObjectId(id) });
+        if (!post) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Post not found' });
+        }
+
+        const dislikes = post.dislikes || [];
+
+        let updateDoc;
+        if (dislikes.includes(email)) {
+          updateDoc = { $pull: { dislikes: email } };
+        } else {
+          updateDoc = {
+            $addToSet: { dislikes: email },
+            $pull: { likes: email },
+          };
+        }
+
+        const result = await forumCollection.updateOne(
+          { _id: new ObjectId(id) },
+          updateDoc,
+        );
+        res.send({ success: true, result });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     app.get('/api/forum/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
@@ -273,6 +343,100 @@ async function run() {
 
         const result = await forumCollection.insertOne(newPost);
         res.send({ success: true, message: 'Forum post published!', result });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    // Comments
+    app.get('/api/comments/:postId', async (req, res) => {
+      try {
+        const postId = req.params.postId;
+        const result = await commentsCollection
+          .find({ postId })
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.post('/api/comments', verifyToken, async (req, res) => {
+      try {
+        const commentData = req.body;
+
+        if (commentData.authorEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Email mismatch' });
+        }
+
+        const newComment = {
+          ...commentData,
+          authorName: req.user.name,
+          authorImage: req.user.image,
+          createdAt: new Date(),
+        };
+
+        const result = await commentsCollection.insertOne(newComment);
+        res.send({ success: true, message: 'Comment posted!', result });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.patch('/api/comments/:id', verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { text } = req.body;
+
+        const comment = await commentsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!comment) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Comment not found' });
+        }
+        if (comment.authorEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
+        }
+
+        const result = await commentsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { text } },
+        );
+        res.send({ success: true, message: 'Comment updated!', result });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
+    app.delete('/api/comments/:id', verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const comment = await commentsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!comment) {
+          return res
+            .status(404)
+            .send({ success: false, message: 'Comment not found' });
+        }
+        if (comment.authorEmail !== req.user.email) {
+          return res
+            .status(403)
+            .send({ success: false, message: 'Forbidden access' });
+        }
+
+        const result = await commentsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+        res.send({ success: true, message: 'Comment deleted!', result });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
