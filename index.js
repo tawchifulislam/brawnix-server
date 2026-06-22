@@ -1300,7 +1300,33 @@ async function run() {
         const totalClasses = await classesCollection.countDocuments();
         const totalBookings = await bookingsCollection.countDocuments();
 
-        res.send({ totalUsers, totalClasses, totalBookings });
+        const userCount = await usersCollection.countDocuments({
+          role: 'user',
+        });
+        const trainerCount = await usersCollection.countDocuments({
+          role: 'trainer',
+        });
+        const adminCount = await usersCollection.countDocuments({
+          role: 'admin',
+        });
+
+        const approvedCount = await classesCollection.countDocuments({
+          status: 'Approved',
+        });
+        const pendingCount = await classesCollection.countDocuments({
+          status: 'Pending',
+        });
+        const rejectedCount = await classesCollection.countDocuments({
+          status: 'Rejected',
+        });
+
+        res.send({
+          totalUsers,
+          totalClasses,
+          totalBookings,
+          roleBreakdown: { userCount, trainerCount, adminCount },
+          classStatusBreakdown: { approvedCount, pendingCount, rejectedCount },
+        });
       } catch (error) {
         res.status(500).send({ success: false, message: error.message });
       }
