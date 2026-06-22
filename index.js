@@ -796,6 +796,25 @@ async function run() {
       },
     );
 
+    app.get('/api/trainer-applications/me', verifyToken, async (req, res) => {
+      try {
+        const application = await database
+          .collection('trainer_applications')
+          .findOne({ email: req.user.email }, { sort: { _id: -1 } });
+
+        if (!application) {
+          return res.send(null);
+        }
+
+        res.send({
+          status: application.status,
+          feedback: application.feedback || '',
+        });
+      } catch (error) {
+        res.status(500).send({ success: false, message: error.message });
+      }
+    });
+
     app.get(
       '/api/trainer-applications',
       verifyToken,
