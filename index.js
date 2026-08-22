@@ -9,8 +9,6 @@ const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
 const app = express();
 const port = process.env.PORT || 5000;
 
-app.set('trust proxy', 1);
-
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -26,13 +24,32 @@ app.get('/', (req, res) => {
 
 const uri = process.env.MONGODB_URI;
 
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
+// MongoDB Connection Caching
+let cachedClient = null;
+let cachedDb = null;
+
+async function connectDB() {
+  if (cachedClient && cachedDb) {
+    return { client: cachedClient, db: cachedDb };
+  }
+
+  const client = new MongoClient(uri, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    },
+  });
+
+  await client.connect();
+  const db = client.db('brawnix_db');
+
+  cachedClient = client;
+  cachedDb = db;
+
+  console.log('Fresh MongoDB connection established');
+  return { client, db };
+}
 
 const JWKS = createRemoteJWKSet(
   new URL(
@@ -40,13 +57,9 @@ const JWKS = createRemoteJWKSet(
   ),
 );
 
-let usersCollectionRef;
-
 async function verifyToken(req, res, next) {
   try {
     const token = req.cookies?.token;
-
-    console.log('Token:', token);
 
     if (!token) {
       return res.status(401).send({
@@ -56,25 +69,21 @@ async function verifyToken(req, res, next) {
     }
 
     const { payload } = await jwtVerify(token, JWKS);
+    const { db } = await connectDB();
+    const user = await db.collection('users').findOne({ email: payload.email });
 
-    console.log('Payload:', payload);
-
-    const user = await usersCollectionRef.findOne({
-      email: payload.email,
-    });
-
-    console.log('User:', user);
+    if (!user) {
+      return res
+        .status(401)
+        .send({ success: false, message: 'User not found.' });
+    }
 
     req.user = user;
-
     next();
   } catch (error) {
-    console.log(error);
-
-    return res.status(401).send({
-      success: false,
-      message: 'Invalid or expired token.',
-    });
+    return res
+      .status(401)
+      .send({ success: false, message: 'Invalid or expired token.' });
   }
 }
 
@@ -115,27 +124,11 @@ const checkNotBlocked = (req, res, next) => {
   next();
 };
 
-// async function run() {
-//   try {
-//     await client.connect();
-//     console.log('Connected successfully to Brawnix MongoDB!');
-client
-  .connect(() => {
-    console.log('Connecting to MongoDB');
-  })
-  .catch(console.dir);
-const database = client.db('brawnix_db');
-
-const usersCollection = database.collection('users');
-const classesCollection = database.collection('classes');
-const bookingsCollection = database.collection('bookings');
-const favoritesCollection = database.collection('favorites');
-const forumCollection = database.collection('forum');
-const commentsCollection = database.collection('comments');
-usersCollectionRef = usersCollection;
-
+// Public Routes
 app.get('/api/classes/featured', async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const classesCollection = db.collection('classes');
     const query = { status: 'Approved' };
     const cursor = classesCollection
       .find(query)
@@ -150,6 +143,8 @@ app.get('/api/classes/featured', async (req, res) => {
 
 app.get('/api/forum/latest', async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const forumCollection = db.collection('forum');
     const cursor = forumCollection.find({}).sort({ _id: -1 }).limit(4);
     const result = await cursor.toArray();
     res.send(result);
@@ -160,6 +155,9 @@ app.get('/api/forum/latest', async (req, res) => {
 
 app.get('/api/classes', async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const classesCollection = db.collection('classes');
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 9;
     const skipItems = (page - 1) * limit;
@@ -167,10 +165,7 @@ app.get('/api/classes', async (req, res) => {
     let query = { status: 'Approved' };
 
     if (req.query.search) {
-      query.className = {
-        $regex: req.query.search,
-        $options: 'i',
-      };
+      query.className = { $regex: req.query.search, $options: 'i' };
     }
 
     if (req.query.category) {
@@ -179,16 +174,10 @@ app.get('/api/classes', async (req, res) => {
     }
 
     const totalClasses = await classesCollection.countDocuments(query);
-
     const cursor = classesCollection.find(query).skip(skipItems).limit(limit);
     const classes = await cursor.toArray();
 
-    res.send({
-      total: totalClasses,
-      page,
-      limit,
-      classes,
-    });
+    res.send({ total: totalClasses, page, limit, classes });
   } catch (error) {
     res.status(500).send({ success: false, message: error.message });
   }
@@ -196,6 +185,8 @@ app.get('/api/classes', async (req, res) => {
 
 app.get('/api/classes/all', verifyToken, verifyAdmin, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const classesCollection = db.collection('classes');
     const result = await classesCollection.find().sort({ _id: -1 }).toArray();
     res.send(result);
   } catch (error) {
@@ -205,6 +196,8 @@ app.get('/api/classes/all', verifyToken, verifyAdmin, async (req, res) => {
 
 app.get('/api/classes/:id', verifyToken, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const classesCollection = db.collection('classes');
     const id = req.params.id;
     const query = { _id: new ObjectId(id) };
     const result = await classesCollection.findOne(query);
@@ -223,6 +216,9 @@ app.get('/api/classes/:id', verifyToken, async (req, res) => {
 
 app.get('/api/forum', async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const forumCollection = db.collection('forum');
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 4;
     const skipItems = (page - 1) * limit;
@@ -234,12 +230,7 @@ app.get('/api/forum', async (req, res) => {
       .limit(limit);
     const posts = await cursor.toArray();
 
-    res.send({
-      total: totalPosts,
-      page,
-      limit,
-      posts,
-    });
+    res.send({ total: totalPosts, page, limit, posts });
   } catch (error) {
     res.status(500).send({ success: false, message: error.message });
   }
@@ -247,6 +238,8 @@ app.get('/api/forum', async (req, res) => {
 
 app.get('/api/forum/all', verifyToken, verifyAdmin, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const forumCollection = db.collection('forum');
     const result = await forumCollection.find().sort({ _id: -1 }).toArray();
     res.send(result);
   } catch (error) {
@@ -260,6 +253,8 @@ app.patch(
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const forumCollection = db.collection('forum');
       const id = req.params.id;
       const email = req.user.email;
 
@@ -300,6 +295,8 @@ app.patch(
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const forumCollection = db.collection('forum');
       const id = req.params.id;
       const email = req.user.email;
 
@@ -335,6 +332,8 @@ app.patch(
 
 app.get('/api/forum/:id', verifyToken, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const forumCollection = db.collection('forum');
     const id = req.params.id;
     const query = { _id: new ObjectId(id) };
     const result = await forumCollection.findOne(query);
@@ -353,6 +352,9 @@ app.get('/api/forum/:id', verifyToken, async (req, res) => {
 
 app.post('/api/forum', verifyToken, checkNotBlocked, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const forumCollection = db.collection('forum');
+
     if (req.user.role !== 'trainer' && req.user.role !== 'admin') {
       return res
         .status(403)
@@ -384,6 +386,8 @@ app.post('/api/forum', verifyToken, checkNotBlocked, async (req, res) => {
 // Comments
 app.get('/api/comments/:postId', async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const commentsCollection = db.collection('comments');
     const postId = req.params.postId;
     const result = await commentsCollection
       .find({ postId })
@@ -397,6 +401,8 @@ app.get('/api/comments/:postId', async (req, res) => {
 
 app.post('/api/comments', verifyToken, checkNotBlocked, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const commentsCollection = db.collection('comments');
     const commentData = req.body;
 
     if (commentData.authorEmail !== req.user.email) {
@@ -425,6 +431,8 @@ app.patch(
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const commentsCollection = db.collection('comments');
       const id = req.params.id;
       const { text } = req.body;
 
@@ -459,6 +467,8 @@ app.delete(
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const commentsCollection = db.collection('comments');
       const id = req.params.id;
 
       const comment = await commentsCollection.findOne({
@@ -511,18 +521,19 @@ app.post(
         payment_method_types: ['card'],
       });
 
-      res.send({
-        clientSecret: paymentIntent.client_secret,
-      });
+      res.send({ clientSecret: paymentIntent.client_secret });
     } catch (error) {
       res.status(500).send({ success: false, message: error.message });
     }
   },
 );
 
-// Bookings
+// Bookings 
 app.post('/api/bookings', verifyToken, checkNotBlocked, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const bookingsCollection = db.collection('bookings');
+    const classesCollection = db.collection('classes');
     const bookingData = req.body;
 
     if (bookingData.userEmail !== req.user.email) {
@@ -531,15 +542,10 @@ app.post('/api/bookings', verifyToken, checkNotBlocked, async (req, res) => {
         .send({ success: false, message: 'Email mismatch' });
     }
 
-    const newBooking = {
-      ...bookingData,
-      createdAt: new Date(),
-    };
+    const newBooking = { ...bookingData, createdAt: new Date() };
     const bookingResult = await bookingsCollection.insertOne(newBooking);
     const classFilter = { _id: new ObjectId(bookingData.classId) };
-    const updateDoc = {
-      $inc: { bookingCount: 1 },
-    };
+    const updateDoc = { $inc: { bookingCount: 1 } };
     await classesCollection.updateOne(classFilter, updateDoc);
 
     res.send({
@@ -554,7 +560,10 @@ app.post('/api/bookings', verifyToken, checkNotBlocked, async (req, res) => {
 
 app.get('/api/bookings/check', verifyToken, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const bookingsCollection = db.collection('bookings');
     const { email, classId } = req.query;
+
     if (!email || !classId) {
       return res.status(400).send({
         success: false,
@@ -581,7 +590,10 @@ app.get('/api/bookings/check', verifyToken, async (req, res) => {
 
 app.get('/api/my-bookings', verifyToken, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const bookingsCollection = db.collection('bookings');
     const email = req.query.email;
+
     if (!email) {
       return res
         .status(400)
@@ -612,6 +624,9 @@ app.delete(
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const bookingsCollection = db.collection('bookings');
+      const classesCollection = db.collection('classes');
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
@@ -629,11 +644,8 @@ app.delete(
       }
 
       const deleteResult = await bookingsCollection.deleteOne(query);
-
       const classFilter = { _id: new ObjectId(booking.classId) };
-      const updateDoc = {
-        $inc: { bookingCount: -1 },
-      };
+      const updateDoc = { $inc: { bookingCount: -1 } };
       await classesCollection.updateOne(classFilter, updateDoc);
 
       res.send({
@@ -650,7 +662,10 @@ app.delete(
 // Favorites
 app.get('/api/favorites', verifyToken, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const favoritesCollection = db.collection('favorites');
     const email = req.query.email;
+
     if (!email) {
       return res
         .status(400)
@@ -664,7 +679,6 @@ app.get('/api/favorites', verifyToken, async (req, res) => {
     }
 
     const query = { userEmail: email };
-
     const result = await favoritesCollection
       .find(query)
       .sort({ _id: -1 })
@@ -681,6 +695,8 @@ app.delete(
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const favoritesCollection = db.collection('favorites');
       const id = req.params.id;
       const query = { _id: new ObjectId(id) };
 
@@ -698,12 +714,7 @@ app.delete(
       }
 
       const result = await favoritesCollection.deleteOne(query);
-
-      res.send({
-        success: true,
-        message: 'Removed from favorites!',
-        result,
-      });
+      res.send({ success: true, message: 'Removed from favorites!', result });
     } catch (error) {
       res.status(500).send({ success: false, message: error.message });
     }
@@ -712,6 +723,8 @@ app.delete(
 
 app.post('/api/favorites', verifyToken, checkNotBlocked, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const favoritesCollection = db.collection('favorites');
     const favoriteData = req.body;
 
     if (favoriteData.userEmail !== req.user.email) {
@@ -742,13 +755,17 @@ app.post('/api/favorites', verifyToken, checkNotBlocked, async (req, res) => {
   }
 });
 
-// Trainer Application
+// Trainer Applications
 app.post(
   '/api/trainer-applications',
   verifyToken,
   checkNotBlocked,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const trainerApplicationsCollection = db.collection(
+        'trainer_applications',
+      );
       const applicationData = req.body;
 
       if (applicationData.email !== req.user.email) {
@@ -757,9 +774,10 @@ app.post(
           .send({ success: false, message: 'Email mismatch' });
       }
 
-      const isExist = await database
-        .collection('trainer_applications')
-        .findOne({ email: applicationData.email, status: 'Pending' });
+      const isExist = await trainerApplicationsCollection.findOne({
+        email: applicationData.email,
+        status: 'Pending',
+      });
 
       if (isExist) {
         return res.status(400).send({
@@ -768,9 +786,8 @@ app.post(
         });
       }
 
-      const result = await database
-        .collection('trainer_applications')
-        .insertOne(applicationData);
+      const result =
+        await trainerApplicationsCollection.insertOne(applicationData);
       res.send({
         success: true,
         message: 'Application submitted successfully!',
@@ -784,9 +801,13 @@ app.post(
 
 app.get('/api/trainer-applications/me', verifyToken, async (req, res) => {
   try {
-    const application = await database
-      .collection('trainer_applications')
-      .findOne({ email: req.user.email }, { sort: { _id: -1 } });
+    const { db } = await connectDB();
+    const trainerApplicationsCollection = db.collection('trainer_applications');
+
+    const application = await trainerApplicationsCollection.findOne(
+      { email: req.user.email },
+      { sort: { _id: -1 } },
+    );
 
     if (!application) {
       return res.send(null);
@@ -807,9 +828,13 @@ app.get(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const trainerApplicationsCollection = db.collection(
+        'trainer_applications',
+      );
+
       const query = { status: 'Pending' };
-      const result = await database
-        .collection('trainer_applications')
+      const result = await trainerApplicationsCollection
         .find(query)
         .sort({ _id: -1 })
         .toArray();
@@ -826,22 +851,23 @@ app.patch(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const trainerApplicationsCollection = db.collection(
+        'trainer_applications',
+      );
+      const usersCollection = db.collection('users');
       const id = req.params.id;
       const { action, userEmail, feedback } = req.body;
 
       const applicationFilter = { _id: new ObjectId(id) };
 
       if (action === 'Approved') {
-        await database
-          .collection('trainer_applications')
-          .updateOne(applicationFilter, {
-            $set: { status: 'Approved', feedback: feedback || '' },
-          });
+        await trainerApplicationsCollection.updateOne(applicationFilter, {
+          $set: { status: 'Approved', feedback: feedback || '' },
+        });
 
         const userFilter = { email: userEmail };
-        const updateUserDoc = {
-          $set: { role: 'trainer' },
-        };
+        const updateUserDoc = { $set: { role: 'trainer' } };
         const userUpdateResult = await usersCollection.updateOne(
           userFilter,
           updateUserDoc,
@@ -855,11 +881,9 @@ app.patch(
       }
 
       if (action === 'Rejected') {
-        await database
-          .collection('trainer_applications')
-          .updateOne(applicationFilter, {
-            $set: { status: 'Rejected', feedback: feedback || '' },
-          });
+        await trainerApplicationsCollection.updateOne(applicationFilter, {
+          $set: { status: 'Rejected', feedback: feedback || '' },
+        });
         return res.send({
           success: true,
           message: 'Application has been rejected.',
@@ -879,6 +903,8 @@ app.post(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
       const classData = req.body;
 
       if (classData.trainerEmail !== req.user.email) {
@@ -912,6 +938,8 @@ app.get(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
       const email = req.params.email;
 
       if (email !== req.user.email) {
@@ -939,6 +967,8 @@ app.patch(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
       const id = req.params.id;
       const updatedData = req.body;
 
@@ -991,6 +1021,8 @@ app.delete(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
       const id = req.params.id;
 
       const existingClass = await classesCollection.findOne({
@@ -1027,6 +1059,9 @@ app.get(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
+      const bookingsCollection = db.collection('bookings');
       const id = req.params.id;
 
       const targetClass = await classesCollection.findOne({
@@ -1058,6 +1093,8 @@ app.get(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const forumCollection = db.collection('forum');
       const email = req.params.email;
 
       if (email !== req.user.email) {
@@ -1084,6 +1121,8 @@ app.delete(
   verifyTrainer,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const forumCollection = db.collection('forum');
       const id = req.params.id;
 
       const existingPost = await forumCollection.findOne({
@@ -1117,6 +1156,8 @@ app.delete(
 // Users (Admin)
 app.get('/api/users', verifyToken, verifyAdmin, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const usersCollection = db.collection('users');
     const result = await usersCollection.find().sort({ _id: -1 }).toArray();
     res.send(result);
   } catch (error) {
@@ -1130,6 +1171,8 @@ app.patch(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const usersCollection = db.collection('users');
       const id = req.params.id;
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -1148,6 +1191,8 @@ app.patch(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const usersCollection = db.collection('users');
       const id = req.params.id;
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(id) },
@@ -1166,16 +1211,14 @@ app.patch(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const usersCollection = db.collection('users');
       const id = req.params.id;
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: { role: 'admin' } },
       );
-      res.send({
-        success: true,
-        message: 'User promoted to Admin.',
-        result,
-      });
+      res.send({ success: true, message: 'User promoted to Admin.', result });
     } catch (error) {
       res.status(500).send({ success: false, message: error.message });
     }
@@ -1185,6 +1228,8 @@ app.patch(
 // Trainers (Admin)
 app.get('/api/trainers', verifyToken, verifyAdmin, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const usersCollection = db.collection('users');
     const result = await usersCollection
       .find({ role: 'trainer' })
       .sort({ _id: -1 })
@@ -1201,29 +1246,30 @@ app.patch(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const usersCollection = db.collection('users');
       const id = req.params.id;
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: { role: 'user' } },
       );
-      res.send({
-        success: true,
-        message: 'Trainer demoted to User.',
-        result,
-      });
+      res.send({ success: true, message: 'Trainer demoted to User.', result });
     } catch (error) {
       res.status(500).send({ success: false, message: error.message });
     }
   },
 );
 
-// Classes (Admin moderation)
+// ============ Classes (Admin Moderation) ============
+
 app.patch(
   '/api/classes/status/:id',
   verifyToken,
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
       const id = req.params.id;
       const { status } = req.body;
 
@@ -1254,6 +1300,8 @@ app.delete(
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const classesCollection = db.collection('classes');
       const id = req.params.id;
       const result = await classesCollection.deleteOne({
         _id: new ObjectId(id),
@@ -1265,9 +1313,12 @@ app.delete(
   },
 );
 
-// Transactions (Admin, read-only)
+// ============ Transactions (Admin) ============
+
 app.get('/api/transactions', verifyToken, verifyAdmin, async (req, res) => {
   try {
+    const { db } = await connectDB();
+    const bookingsCollection = db.collection('bookings');
     const result = await bookingsCollection.find().sort({ _id: -1 }).toArray();
     res.send(result);
   } catch (error) {
@@ -1275,13 +1326,16 @@ app.get('/api/transactions', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// Forum moderation (Admin)
+// ============ Forum Moderation (Admin) ============
+
 app.delete(
   '/api/forum/admin/:id',
   verifyToken,
   verifyAdmin,
   async (req, res) => {
     try {
+      const { db } = await connectDB();
+      const forumCollection = db.collection('forum');
       const id = req.params.id;
       const result = await forumCollection.deleteOne({
         _id: new ObjectId(id),
@@ -1293,32 +1347,36 @@ app.delete(
   },
 );
 
-// Admin stats
+// ============ Admin Stats ============
+
 app.get('/api/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const totalUsers = await usersCollection.countDocuments();
-    const totalClasses = await classesCollection.countDocuments();
-    const totalBookings = await bookingsCollection.countDocuments();
+    const { db } = await connectDB();
+    const usersCollection = db.collection('users');
+    const classesCollection = db.collection('classes');
+    const bookingsCollection = db.collection('bookings');
 
-    const userCount = await usersCollection.countDocuments({
-      role: 'user',
-    });
-    const trainerCount = await usersCollection.countDocuments({
-      role: 'trainer',
-    });
-    const adminCount = await usersCollection.countDocuments({
-      role: 'admin',
-    });
-
-    const approvedCount = await classesCollection.countDocuments({
-      status: 'Approved',
-    });
-    const pendingCount = await classesCollection.countDocuments({
-      status: 'Pending',
-    });
-    const rejectedCount = await classesCollection.countDocuments({
-      status: 'Rejected',
-    });
+    const [
+      totalUsers,
+      totalClasses,
+      totalBookings,
+      userCount,
+      trainerCount,
+      adminCount,
+      approvedCount,
+      pendingCount,
+      rejectedCount,
+    ] = await Promise.all([
+      usersCollection.countDocuments(),
+      classesCollection.countDocuments(),
+      bookingsCollection.countDocuments(),
+      usersCollection.countDocuments({ role: 'user' }),
+      usersCollection.countDocuments({ role: 'trainer' }),
+      usersCollection.countDocuments({ role: 'admin' }),
+      classesCollection.countDocuments({ status: 'Approved' }),
+      classesCollection.countDocuments({ status: 'Pending' }),
+      classesCollection.countDocuments({ status: 'Rejected' }),
+    ]);
 
     res.send({
       totalUsers,
@@ -1331,11 +1389,6 @@ app.get('/api/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).send({ success: false, message: error.message });
   }
 });
-//   } finally {
-//     // await client.close();
-//   }
-// }
-// run().catch(console.dir);
 
 app.listen(port, () => {
   console.log(`Brawnix Server is running on port ${port}`);
