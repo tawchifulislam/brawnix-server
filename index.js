@@ -5,9 +5,16 @@ const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { createRemoteJWKSet, jwtVerify } = require('jose-cjs');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
+const { body, param, query, validationResult } = require('express-validator');
 
 const app = express();
 const port = process.env.PORT || 5000;
+//  Security Middleware
+app.use(helmet());
+app.use(morgan('dev'));
 
 app.use(
   cors({
@@ -17,6 +24,31 @@ app.use(
 );
 app.use(express.json());
 app.use(cookieParser());
+
+// Rate Limiting
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many requests, please try again later.',
+  },
+});
+
+const strictLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: {
+    success: false,
+    message: 'Too many attempts, please try again later.',
+  },
+});
+
+app.use('/api', globalLimiter);
+app.use('/api/trainer-applications', strictLimiter);
+app.use('/api/create-payment-intent', strictLimiter);
 
 app.get('/', (req, res) => {
   res.send('Brawnix Elite Fitness Server is Running...');
@@ -528,7 +560,7 @@ app.post(
   },
 );
 
-// Bookings 
+// Bookings
 app.post('/api/bookings', verifyToken, checkNotBlocked, async (req, res) => {
   try {
     const { db } = await connectDB();
@@ -1388,6 +1420,15 @@ app.get('/api/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
   } catch (error) {
     res.status(500).send({ success: false, message: error.message });
   }
+});
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error(`[${new Date().toISOString()}] ${err.stack}`);
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal Server Error',
+  });
 });
 
 app.listen(port, () => {
