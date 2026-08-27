@@ -79,7 +79,24 @@ async function connectDB() {
   cachedClient = client;
   cachedDb = db;
 
-  console.log('Fresh MongoDB connection established');
+  // MongoDB Indexes
+  await Promise.all([
+    db.collection('users').createIndex({ email: 1 }, { unique: true }),
+    db.collection('bookings').createIndex({ userEmail: 1 }),
+    db.collection('bookings').createIndex({ classId: 1 }),
+    db.collection('bookings').createIndex({ userEmail: 1, classId: 1 }),
+    db.collection('favorites').createIndex({ userEmail: 1 }),
+    db.collection('favorites').createIndex({ userEmail: 1, classId: 1 }),
+    db.collection('classes').createIndex({ status: 1, bookingCount: -1 }),
+    db.collection('classes').createIndex({ trainerEmail: 1 }),
+    db.collection('classes').createIndex({ className: 'text' }),
+    db.collection('forum').createIndex({ createdAt: -1 }),
+    db.collection('forum').createIndex({ authorEmail: 1 }),
+    db.collection('comments').createIndex({ postId: 1 }),
+    db.collection('trainer_applications').createIndex({ email: 1, status: 1 }),
+  ]).catch(err => console.log('Index creation note:', err.message));
+
+  console.log('Fresh MongoDB connection established with indexes');
   return { client, db };
 }
 
@@ -118,6 +135,18 @@ async function verifyToken(req, res, next) {
       .send({ success: false, message: 'Invalid or expired token.' });
   }
 }
+// Validation Helper
+const validate = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({
+      success: false,
+      message: errors.array()[0].msg,
+      errors: errors.array(),
+    });
+  }
+  next();
+};
 
 const verifyUser = (req, res, next) => {
   if (req.user?.role !== 'user') {
@@ -1292,7 +1321,7 @@ app.patch(
   },
 );
 
-// ============ Classes (Admin Moderation) ============
+// Classes (Admin Moderation)
 
 app.patch(
   '/api/classes/status/:id',
@@ -1345,7 +1374,7 @@ app.delete(
   },
 );
 
-// ============ Transactions (Admin) ============
+// Transactions (Admin)
 
 app.get('/api/transactions', verifyToken, verifyAdmin, async (req, res) => {
   try {
@@ -1358,7 +1387,7 @@ app.get('/api/transactions', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// ============ Forum Moderation (Admin) ============
+// Forum Moderation (Admin)
 
 app.delete(
   '/api/forum/admin/:id',
@@ -1379,7 +1408,7 @@ app.delete(
   },
 );
 
-// ============ Admin Stats ============
+// Admin Stats
 
 app.get('/api/admin-stats', verifyToken, verifyAdmin, async (req, res) => {
   try {
