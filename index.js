@@ -821,6 +821,16 @@ app.post(
   '/api/trainer-applications',
   verifyToken,
   checkNotBlocked,
+  [
+    body('email').isEmail().withMessage('Valid email is required'),
+    body('skills').notEmpty().trim().withMessage('Skills are required'),
+    body('experience').notEmpty().trim().withMessage('Experience is required'),
+    body('availableTime')
+      .notEmpty()
+      .trim()
+      .withMessage('Available time is required'),
+  ],
+  validate,
   async (req, res) => {
     try {
       const { db } = await connectDB();
@@ -962,6 +972,21 @@ app.post(
   verifyToken,
   checkNotBlocked,
   verifyTrainer,
+  [
+    body('className').notEmpty().trim().withMessage('Class name is required'),
+    body('category').notEmpty().withMessage('Category is required'),
+    body('price')
+      .isFloat({ min: 0 })
+      .withMessage('Price must be a valid number'),
+    body('description')
+      .notEmpty()
+      .trim()
+      .withMessage('Description is required'),
+    body('image').isURL().withMessage('Valid image URL is required'),
+    body('duration').notEmpty().trim().withMessage('Duration is required'),
+    body('schedule').notEmpty().trim().withMessage('Schedule is required'),
+  ],
+  validate,
   async (req, res) => {
     try {
       const { db } = await connectDB();
