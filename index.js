@@ -411,38 +411,53 @@ app.get('/api/forum/:id', verifyToken, async (req, res) => {
   }
 });
 
-app.post('/api/forum', verifyToken, checkNotBlocked, async (req, res) => {
-  try {
-    const { db } = await connectDB();
-    const forumCollection = db.collection('forum');
+app.post(
+  '/api/forum',
+  verifyToken,
+  checkNotBlocked,
+  [
+    body('title').notEmpty().trim().withMessage('Title is required'),
+    body('description')
+      .notEmpty()
+      .trim()
+      .withMessage('Description is required'),
+    body('image').isURL().withMessage('Valid image URL is required'),
+    body('authorEmail').isEmail().withMessage('Valid author email is required'),
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const { db } = await connectDB();
+      const forumCollection = db.collection('forum');
 
-    if (req.user.role !== 'trainer' && req.user.role !== 'admin') {
-      return res
-        .status(403)
-        .send({ success: false, message: 'Forbidden access' });
+      if (req.user.role !== 'trainer' && req.user.role !== 'admin') {
+        return res
+          .status(403)
+          .send({ success: false, message: 'Forbidden access' });
+      }
+
+      const postData = req.body;
+
+      if (postData.authorEmail !== req.user.email) {
+        return res
+          .status(403)
+          .send({ success: false, message: 'Email mismatch' });
+      }
+
+      const newPost = {
+        ...postData,
+        authorName: req.user.name,
+        authorImage: req.user.image,
+        createdAt: new Date(),
+      };
+
+      const result = await forumCollection.insertOne(newPost);
+      res.send({ success: true, message: 'Forum post published!', result });
+    } catch (error) {
+      res.status(500).send({ success: false, message: error.message });
     }
-
-    const postData = req.body;
-
-    if (postData.authorEmail !== req.user.email) {
-      return res
-        .status(403)
-        .send({ success: false, message: 'Email mismatch' });
-    }
-
-    const newPost = {
-      ...postData,
-      authorName: req.user.name,
-      authorImage: req.user.image,
-      createdAt: new Date(),
-    };
-
-    const result = await forumCollection.insertOne(newPost);
-    res.send({ success: true, message: 'Forum post published!', result });
-  } catch (error) {
-    res.status(500).send({ success: false, message: error.message });
-  }
-});
+  },
+);
 
 // Comments
 app.get('/api/comments/:postId', async (req, res) => {
