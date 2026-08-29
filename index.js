@@ -589,23 +589,18 @@ app.post(
   '/api/create-payment-intent',
   verifyToken,
   checkNotBlocked,
+  [
+    body('price').isFloat({ min: 0.01 }).withMessage('Valid price is required'),
+    body('userEmail').isEmail().withMessage('Valid user email is required'),
+  ],
+  validate,
   async (req, res) => {
     try {
       const { price, userEmail } = req.body;
 
-      if (!userEmail) {
-        return res.status(401).send({
-          success: false,
-          message: 'Unauthorized! Please login first.',
-        });
-      }
-
       const amount = parseInt(price * 100);
-      if (!amount || amount < 1)
-        return res.status(400).send({ message: 'Invalid amount' });
-
       const paymentIntent = await stripe.paymentIntents.create({
-        amount: amount,
+        amount,
         currency: 'usd',
         payment_method_types: ['card'],
       });
