@@ -475,31 +475,42 @@ app.get('/api/comments/:postId', async (req, res) => {
   }
 });
 
-app.post('/api/comments', verifyToken, checkNotBlocked, async (req, res) => {
-  try {
-    const { db } = await connectDB();
-    const commentsCollection = db.collection('comments');
-    const commentData = req.body;
+app.post(
+  '/api/comments',
+  verifyToken,
+  checkNotBlocked,
+  [
+    body('text').notEmpty().trim().withMessage('Comment text is required'),
+    body('postId').notEmpty().withMessage('Post ID is required'),
+    body('authorEmail').isEmail().withMessage('Valid author email is required'),
+  ],
+  validate,
+  async (req, res) => {
+    try {
+      const { db } = await connectDB();
+      const commentsCollection = db.collection('comments');
+      const commentData = req.body;
 
-    if (commentData.authorEmail !== req.user.email) {
-      return res
-        .status(403)
-        .send({ success: false, message: 'Email mismatch' });
+      if (commentData.authorEmail !== req.user.email) {
+        return res
+          .status(403)
+          .send({ success: false, message: 'Email mismatch' });
+      }
+
+      const newComment = {
+        ...commentData,
+        authorName: req.user.name,
+        authorImage: req.user.image,
+        createdAt: new Date(),
+      };
+
+      const result = await commentsCollection.insertOne(newComment);
+      res.send({ success: true, message: 'Comment posted!', result });
+    } catch (error) {
+      res.status(500).send({ success: false, message: error.message });
     }
-
-    const newComment = {
-      ...commentData,
-      authorName: req.user.name,
-      authorImage: req.user.image,
-      createdAt: new Date(),
-    };
-
-    const result = await commentsCollection.insertOne(newComment);
-    res.send({ success: true, message: 'Comment posted!', result });
-  } catch (error) {
-    res.status(500).send({ success: false, message: error.message });
-  }
-});
+  },
+);
 
 app.patch(
   '/api/comments/:id',
