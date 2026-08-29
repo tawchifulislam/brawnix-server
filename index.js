@@ -516,6 +516,8 @@ app.patch(
   '/api/comments/:id',
   verifyToken,
   checkNotBlocked,
+  [body('text').notEmpty().trim().withMessage('Comment text is required')],
+  validate,
   async (req, res) => {
     try {
       const { db } = await connectDB();
